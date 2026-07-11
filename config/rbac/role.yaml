@@ -1,11 +1,35 @@
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  labels:
-    app.kubernetes.io/name: namespace-cost-governor
-    app.kubernetes.io/managed-by: kustomize
   name: manager-role
 rules:
-- apiGroups: [""]
-  resources: ["pods"]
-  verbs: ["get", "list", "watch"]
+- apiGroups:
+  - cost.cost.platform.io
+  resources:
+  - costreports
+  - namespacebudgets
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - cost.cost.platform.io
+  resources:
+  - costreports/finalizers
+  - namespacebudgets/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - cost.cost.platform.io
+  resources:
+  - costreports/status
+  - namespacebudgets/status
+  verbs:
+  - get
+  - patch
+  - update

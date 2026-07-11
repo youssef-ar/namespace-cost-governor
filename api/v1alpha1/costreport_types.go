@@ -1,47 +1,21 @@
-/*
-Copyright 2026.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
-
 package v1alpha1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
-
 // CostReportSpec defines the desired state of CostReport
 type CostReportSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-	// The following markers will use OpenAPI v3 schema to validate the value
-	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
-
-	// foo is an example field of CostReport. Edit costreport_types.go to remove/update
-	// +optional
-	Foo *string `json:"foo,omitempty"`
 }
 
 // CostReportStatus defines the observed state of CostReport.
 type CostReportStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-
-	// For Kubernetes API conventions, see:
-	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
+	Period          string           `json:"period,omitempty"` // YYYY-MM
+	NameSpace       string           `json:"namespace,omitempty"`
+	TotalCost       TotalCost        `json:"totalCost,omitempty"`
+	TopConsumers    []TopConsumer    `json:"topConsumers,omitempty"`
+	IdleEvents      []IdleEvent      `json:"idleEvents,omitempty"`
+	SuspendedEvents []SuspendedEvent `json:"suspendedEvents,omitempty"`
 
 	// conditions represent the current state of the CostReport resource.
 	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
@@ -56,6 +30,31 @@ type CostReportStatus struct {
 	// +listMapKey=type
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+}
+
+type TotalCost struct {
+	Cpu    string `json:"cpu,omitempty"`
+	Memory string `json:"memory,omitempty"`
+	// based on configurable price-per-unit
+	EstimatedCost string `json:"estimatedCost,omitempty"`
+}
+
+type TopConsumer struct {
+	Workload      string `json:"workload,omitempty"`
+	CpuPercent    int    `json:"cpuPercent,omitempty"`
+	MemoryPercent int    `json:"memoryPercent,omitempty"`
+}
+
+type IdleEvent struct {
+	Workload       string `json:"workload,omitempty"`
+	ScaledDownAt   string `json:"scaledDownAt,omitempty"`
+	EstimatedSaved string `json:"estimatedSaved,omitempty"`
+}
+
+type SuspendedEvent struct {
+	Workload       string `json:"workload,omitempty"`
+	SuspendedAt    string `json:"suspendedAt,omitempty"`
+	EstimatedSaved string `json:"estimatedSaved,omitempty"`
 }
 
 // +kubebuilder:object:root=true

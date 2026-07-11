@@ -6,4 +6,20 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: namespacebudget-sample
 spec:
-  # TODO(user): Add fields here
+  monthly:
+    cpu: "50"          # core-hours per month
+    memory: "200Gi"    # GiB-hours per month
+  idleThreshold:
+    cpuPercent: 5      # below this = idle
+    window: 30m        # averaged over this window
+  actions:
+    onWarning:         # 80% budget consumed
+      - notify: slack
+    onExceeded:        # 100% budget consumed
+      - notify: slack
+      - scaleDownIdle: true   # scale idle Deployments to 0
+    onHardLimit:       # 120% budget consumed
+      - suspendAll: true      # scale everything to 0
+  exclusions:
+    - name: payments-db       # never touch this Deployment
+    - name: payments-worker

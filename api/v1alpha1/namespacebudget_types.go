@@ -1,47 +1,59 @@
-/*
-Copyright 2026.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
-
 package v1alpha1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
-
 // NamespaceBudgetSpec defines the desired state of NamespaceBudget
 type NamespaceBudgetSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-	// The following markers will use OpenAPI v3 schema to validate the value
-	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
+	Monthly       Usage         `json:"monthly"`
+	IdleThreshold IdleThreshold `json:"idleThreshold"`
+	Actions       Actions       `json:"actions"`
+	Exclusions    []Exclusion   `json:"exclusions,omitempty"`
+}
 
-	// foo is an example field of NamespaceBudget. Edit namespacebudget_types.go to remove/update
-	// +optional
-	Foo *string `json:"foo,omitempty"`
+type Usage struct {
+	// core-hours per month
+	Cpu string `json:"cpu"`
+	// Gib-hours per month
+	Memory string `json:"memory"`
+}
+type IdleThreshold struct {
+	// below this = idle
+	CpuPercent int `json:"cpuPercent"`
+	// averaged over this window
+	Window string `json:"window"`
+}
+type Actions struct {
+	// 80% of budget used
+	OnWarning []Action `json:"onWarning,omitempty"`
+	// 100% of budget used
+	OnExceeded []Action `json:"onExceeded,omitempty"`
+	// 120% of budget used
+	OnHardLimit []Action `json:"onHardLimit,omitempty"`
+}
+type Action struct {
+	// Notify Slack
+	Notify string `json:"notify,omitempty"` //slack
+	// Scale down idle workloads
+	ScaleDownIdle bool `json:"scaleDownIdle,omitempty"`
+	// Suspend all workloads
+	SuspendAll bool `json:"suspendAll,omitempty"`
+}
+
+type Exclusion struct {
+	// never touch this deployment, statefulset, or cronjob
+	Name string `json:"name"`
 }
 
 // NamespaceBudgetStatus defines the observed state of NamespaceBudget.
 type NamespaceBudgetStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-
-	// For Kubernetes API conventions, see:
-	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
+	Phase         string         `json:"phase,omitempty"` // OK | Warning | Exceeded | Suspended
+	CurrentUsage  Usage          `json:"currentUsage,omitempty"`
+	BudgetPercent int            `json:"budgetPercent,omitempty"`
+	IdleWorkloads []IdleWorkload `json:"idleWorkloads,omitempty"`
+	// Reference to the latest generated cost report.
+	LastReportRef string `json:"lastReportRef,omitempty"`
 
 	// conditions represent the current state of the NamespaceBudget resource.
 	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
@@ -56,6 +68,10 @@ type NamespaceBudgetStatus struct {
 	// +listMapKey=type
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+}
+type IdleWorkload struct {
+	Name      string `json:"name"`
+	IdleSince string `json:"idleSince"`
 }
 
 // +kubebuilder:object:root=true
