@@ -1,0 +1,9 @@
+apiVersion: cost.cost.platform.io/v1alpha1
+kind: NamespaceBudget
+metadata:
+  labels:
+    app.kubernetes.io/name: namespace-cost-governor
+    app.kubernetes.io/managed-by: kustomize
+  name: namespacebudget-sample
+spec:
+  # TODO(user): Add fields here
