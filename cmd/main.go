@@ -37,6 +37,7 @@ import (
 
 	costv1alpha1 "github.com/youssef-ar/namespace-cost-governor/api/v1alpha1"
 	"github.com/youssef-ar/namespace-cost-governor/internal/controller"
+	"github.com/youssef-ar/namespace-cost-governor/internal/metrics"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -61,6 +62,7 @@ func main() {
 	var probeAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
+	var prometheusAddr string
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -77,6 +79,8 @@ func main() {
 		"The directory that contains the metrics server certificate.")
 	flag.StringVar(&metricsCertName, "metrics-cert-name", "tls.crt", "The name of the metrics server certificate file.")
 	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics server key file.")
+	flag.StringVar(&prometheusAddr, "prometheus-address", "http://prometheus:9090",
+		"The address of the Prometheus server to query for cost metrics.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
 	opts := zap.Options{
@@ -178,9 +182,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	promClient := metrics.NewClient(prometheusAddr)
+
 	if err := (&controller.NamespaceBudgetReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:           mgr.GetClient(),
+		Scheme:           mgr.GetScheme(),
+		PrometheusClient: promClient,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "namespacebudget")
 		os.Exit(1)

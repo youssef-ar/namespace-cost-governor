@@ -48,10 +48,12 @@ type Exclusion struct {
 
 // NamespaceBudgetStatus defines the observed state of NamespaceBudget.
 type NamespaceBudgetStatus struct {
-	Phase         string         `json:"phase,omitempty"` // OK | Warning | Exceeded | Suspended
-	CurrentUsage  Usage          `json:"currentUsage,omitempty"`
-	BudgetPercent int            `json:"budgetPercent,omitempty"`
-	IdleWorkloads []IdleWorkload `json:"idleWorkloads,omitempty"`
+	Phase         string           `json:"phase,omitempty"` // OK | Warning | Exceeded | Suspended
+	CurrentUsage  Usage            `json:"currentUsage,omitempty"`
+	Accumulated   AccumulatedUsage `json:"accumulatedUsage,omitempty"`
+	LastReconcile metav1.Time      `json:"lastReconcile,omitempty"`
+	BudgetPercent int              `json:"budgetPercent,omitempty"`
+	IdleWorkloads []IdleWorkload   `json:"idleWorkloads,omitempty"`
 	// Reference to the latest generated cost report.
 	LastReportRef string `json:"lastReportRef,omitempty"`
 
@@ -72,6 +74,11 @@ type NamespaceBudgetStatus struct {
 type IdleWorkload struct {
 	Name      string `json:"name"`
 	IdleSince string `json:"idleSince"`
+}
+type AccumulatedUsage struct {
+	CoreHours float64 `json:"coreHours"`
+	GiBHours  float64 `json:"gibHours"`
+	Since     string  `json:"since"` // start of current month, RFC3339
 }
 
 // +kubebuilder:object:root=true

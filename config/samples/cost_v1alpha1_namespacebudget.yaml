@@ -8,7 +8,7 @@ metadata:
 spec:
   monthly:
     cpu: "50"          # core-hours per month
-    memory: "200Gi"    # GiB-hours per month
+    memory: "200"    # GiB-hours per month
   idleThreshold:
     cpuPercent: 5      # below this = idle
     window: 30m        # averaged over this window

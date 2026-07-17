@@ -129,6 +129,17 @@ spec:
           status:
             description: status defines the observed state of NamespaceBudget
             properties:
+              accumulatedUsage:
+                properties:
+                  coreHours: {}
+                  gibHours: {}
+                  since:
+                    type: string
+                required:
+                - coreHours
+                - gibHours
+                - since
+                type: object
               budgetPercent:
                 type: integer
               conditions:
@@ -224,6 +235,9 @@ spec:
                   - name
                   type: object
                 type: array
+              lastReconcile:
+                format: date-time
+                type: string
               lastReportRef:
                 description: Reference to the latest generated cost report.
                 type: string
