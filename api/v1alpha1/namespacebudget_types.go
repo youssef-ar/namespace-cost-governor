@@ -19,7 +19,7 @@ type Usage struct {
 	Memory string `json:"memory"`
 }
 type IdleThreshold struct {
-	// below this = idle
+	// below this percent of it's requested CPU = idle
 	CpuPercent int `json:"cpuPercent"`
 	// averaged over this window
 	Window string `json:"window"`
@@ -43,7 +43,8 @@ type Action struct {
 
 type Exclusion struct {
 	// never touch this deployment, statefulset, or cronjob
-	Name string `json:"name"`
+	Name          string `json:"name"`
+	LabelSelector *metav1.LabelSelector
 }
 
 // NamespaceBudgetStatus defines the observed state of NamespaceBudget.
@@ -72,8 +73,9 @@ type NamespaceBudgetStatus struct {
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 type IdleWorkload struct {
-	Name      string `json:"name"`
-	IdleSince string `json:"idleSince"`
+	Name      string      `json:"name"`
+	Namespace string      `json:"namespace"`
+	IdleSince metav1.Time `json:"idleSince"`
 }
 type AccumulatedUsage struct {
 	CoreHours float64 `json:"coreHours"`

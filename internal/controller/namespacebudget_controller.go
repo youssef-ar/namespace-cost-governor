@@ -23,17 +23,21 @@ import (
 	"strconv"
 	"time"
 
+	actions "github.com/youssef-ar/namespace-cost-governor/internal/actions"
+	appsv1 "k8s.io/api/apps/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	costv1alpha1 "github.com/youssef-ar/namespace-cost-governor/api/v1alpha1"
+	"github.com/youssef-ar/namespace-cost-governor/internal/idle"
 	"github.com/youssef-ar/namespace-cost-governor/internal/metrics"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 )
 
 // NamespaceBudgetReconciler reconciles a NamespaceBudget object
@@ -195,6 +199,74 @@ func (r *NamespaceBudgetReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, err
 	}
 
+	// step 8: Detect idle workloads if budget is exceeded or suspended
+	// Only run idle detection if budget is under pressure
+
+	var actionable []idle.IdleWorkload
+	if phase == "Exceeded" || phase == "Suspended" {
+		window, err := parseDuration(
+			budget.Spec.IdleThreshold.Window,
+		)
+
+		if err != nil {
+			logger.Error(err, "invalid idle threshold window")
+			return ctrl.Result{}, err
+		}
+		idleWorkloads, err := idle.DetectIdle(
+			ctx,
+			*r.PrometheusClient,
+			req.Namespace,
+			float64(budget.Spec.IdleThreshold.CpuPercent),
+			window,
+		)
+		if err != nil {
+			logger.Error(err, "failed to detect idle workloads")
+			// non-fatal — continue without idle detection this tick
+		} else {
+			// Filter out excluded workloads before storing or acting
+
+			for _, w := range idleWorkloads {
+				// Check name-based exclusion first (no API call needed)
+				if idle.IsExcluded(w.Name, budget.Spec.Exclusions) {
+					continue
+				}
+
+				// Fetch the Deployment to check label-based exclusion
+				deployment := &appsv1.Deployment{}
+				if err := r.Get(ctx, types.NamespacedName{
+					Name:      w.Name,
+					Namespace: w.Namespace,
+				}, deployment); err != nil {
+					// Deployment may have been deleted between detection and now
+					logger.Error(err, "failed to fetch deployment for exclusion check", "deployment", w.Name)
+					continue
+				}
+
+				if isLabelExcluded(*deployment, budget.Spec.Exclusions) {
+					continue
+				}
+
+				actionable = append(actionable, w)
+			}
+
+			// Persist the filtered idle workload list in status for visibility
+			budget.Status.IdleWorkloads = toIdleWorkloadStatus(actionable)
+			if err := r.updateStatus(ctx, budget, phase, budget.Status.BudgetPercent); err != nil {
+				logger.Error(err, "failed to update status with idle workloads")
+			}
+		}
+	}
+
+	// step9: Scale down actionable idle workloads (Exceeded and Suspended phase)
+	if phase == "Exceeded" || phase == "Suspended" {
+		for _, w := range actionable {
+			if err := actions.ScaleDown(ctx, r.Client, w); err != nil {
+				logger.Error(err, "failed to scale down idle workload", "deployment", w.Name)
+				// non-fatal — log and continue to next workload
+			}
+		}
+	}
+
 	return ctrl.Result{
 		RequeueAfter: time.Minute,
 	}, nil
@@ -295,4 +367,42 @@ func setCondition(conditions *[]metav1.Condition, new metav1.Condition) {
 		}
 	}
 	*conditions = append(*conditions, new)
+}
+
+func isLabelExcluded(d appsv1.Deployment, exclusions []costv1alpha1.Exclusion) bool {
+	for _, ex := range exclusions {
+		if ex.LabelSelector == nil {
+			continue
+		}
+		selector, err := metav1.LabelSelectorAsSelector(ex.LabelSelector)
+		if err != nil {
+			// malformed selector in spec — skip it rather than panic
+			continue
+		}
+		if selector.Matches(labels.Set(d.Labels)) {
+			return true
+		}
+	}
+	return false
+}
+
+func toIdleWorkloadStatus(workloads []idle.IdleWorkload) []costv1alpha1.IdleWorkload {
+	result := make([]costv1alpha1.IdleWorkload, 0, len(workloads))
+	for _, w := range workloads {
+		result = append(result, costv1alpha1.IdleWorkload{
+			Name:      w.Name,
+			Namespace: w.Namespace,
+			IdleSince: metav1.NewTime(w.IdleSince),
+		})
+	}
+	return result
+}
+
+func parseDuration(value string) (time.Duration, error) {
+	duration, err := time.ParseDuration(value)
+	if err != nil {
+		return 0, fmt.Errorf("invalid duration %q: %w", value, err)
+	}
+
+	return duration, nil
 }
