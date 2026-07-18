@@ -8,6 +8,9 @@ import (
 
 	costv1alpha1 "github.com/youssef-ar/namespace-cost-governor/api/v1alpha1"
 	"github.com/youssef-ar/namespace-cost-governor/internal/metrics"
+	appsv1 "k8s.io/api/apps/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 )
 
 type IdleWorkload struct {
@@ -100,6 +103,23 @@ func IsExcluded(workloadName string, exclusions []costv1alpha1.Exclusion) bool {
 		}
 		// Label selector exclusion — checked by the caller before passing here
 		// (label matching requires the actual Deployment object, not just a name)
+	}
+	return false
+}
+
+func IsLabelExcluded(d appsv1.Deployment, exclusions []costv1alpha1.Exclusion) bool {
+	for _, ex := range exclusions {
+		if ex.LabelSelector == nil {
+			continue
+		}
+		selector, err := metav1.LabelSelectorAsSelector(ex.LabelSelector)
+		if err != nil {
+			// malformed selector in spec — skip it rather than panic
+			continue
+		}
+		if selector.Matches(labels.Set(d.Labels)) {
+			return true
+		}
 	}
 	return false
 }

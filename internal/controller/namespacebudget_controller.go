@@ -37,7 +37,6 @@ import (
 	"github.com/youssef-ar/namespace-cost-governor/internal/idle"
 	"github.com/youssef-ar/namespace-cost-governor/internal/metrics"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
 )
 
 // NamespaceBudgetReconciler reconciles a NamespaceBudget object
@@ -45,6 +44,7 @@ type NamespaceBudgetReconciler struct {
 	client.Client
 	Scheme           *runtime.Scheme
 	PrometheusClient *metrics.Client
+	SlackWebhookURL  string
 }
 
 const (
@@ -89,6 +89,7 @@ func (r *NamespaceBudgetReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		logger.Error(err, "unable to fetch NamespaceBudget")
 		return ctrl.Result{}, err
 	}
+	previousPhase := budget.Status.Phase
 	// step2: handle deletion
 	if !budget.DeletionTimestamp.IsZero() {
 
@@ -192,6 +193,7 @@ func (r *NamespaceBudgetReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 	// Determine phase
 	phase := determinePhase(budgetPercent)
+	phaseChanged := previousPhase != phase
 
 	// step 7: update status conditions
 	if err := r.updateStatus(ctx, budget, phase, int(budgetPercent)); err != nil {
@@ -242,7 +244,7 @@ func (r *NamespaceBudgetReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 					continue
 				}
 
-				if isLabelExcluded(*deployment, budget.Spec.Exclusions) {
+				if idle.IsLabelExcluded(*deployment, budget.Spec.Exclusions) {
 					continue
 				}
 
@@ -258,12 +260,31 @@ func (r *NamespaceBudgetReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 
 	// step9: Scale down actionable idle workloads (Exceeded and Suspended phase)
+	affectedNames := make([]string, 0, len(actionable))
 	if phase == "Exceeded" || phase == "Suspended" {
 		for _, w := range actionable {
 			if err := actions.ScaleDown(ctx, r.Client, w); err != nil {
 				logger.Error(err, "failed to scale down idle workload", "deployment", w.Name)
 				// non-fatal — log and continue to next workload
+				continue
 			}
+			affectedNames = append(affectedNames, w.Name)
+		}
+	}
+
+	// step10: Suspend all workloads if in Suspended phase
+	if phase == "Suspended" {
+		suspendedNames, err := actions.SuspendAll(ctx, r.Client, req.Namespace, budget.Spec.Exclusions)
+		if err != nil {
+			logger.Error(err, "failed to suspend all workloads")
+		}
+		affectedNames = append(affectedNames, suspendedNames...)
+	}
+	// step11: Notify on phase transition only
+	if phaseChanged && r.SlackWebhookURL != "" {
+		msg := actions.BuildMessage(req.Namespace, phase, budget.Status.BudgetPercent, affectedNames)
+		if err := actions.SendSlack(ctx, r.SlackWebhookURL, msg); err != nil {
+			logger.Error(err, "failed to send slack notification")
 		}
 	}
 
@@ -367,23 +388,6 @@ func setCondition(conditions *[]metav1.Condition, new metav1.Condition) {
 		}
 	}
 	*conditions = append(*conditions, new)
-}
-
-func isLabelExcluded(d appsv1.Deployment, exclusions []costv1alpha1.Exclusion) bool {
-	for _, ex := range exclusions {
-		if ex.LabelSelector == nil {
-			continue
-		}
-		selector, err := metav1.LabelSelectorAsSelector(ex.LabelSelector)
-		if err != nil {
-			// malformed selector in spec — skip it rather than panic
-			continue
-		}
-		if selector.Matches(labels.Set(d.Labels)) {
-			return true
-		}
-	}
-	return false
 }
 
 func toIdleWorkloadStatus(workloads []idle.IdleWorkload) []costv1alpha1.IdleWorkload {
