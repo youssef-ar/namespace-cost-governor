@@ -24,6 +24,7 @@ import (
 	"time"
 
 	actions "github.com/youssef-ar/namespace-cost-governor/internal/actions"
+	"github.com/youssef-ar/namespace-cost-governor/internal/report"
 	appsv1 "k8s.io/api/apps/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -42,9 +43,11 @@ import (
 // NamespaceBudgetReconciler reconciles a NamespaceBudget object
 type NamespaceBudgetReconciler struct {
 	client.Client
-	Scheme           *runtime.Scheme
-	PrometheusClient *metrics.Client
-	SlackWebhookURL  string
+	Scheme              *runtime.Scheme
+	PrometheusClient    *metrics.Client
+	SlackWebhookURL     string
+	CPUPricePerCoreHour float64
+	MemPricePerGiBHour  float64
 }
 
 const (
@@ -88,6 +91,26 @@ func (r *NamespaceBudgetReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		// Any other error (network issue, RBAC, etc.) is worth logging.
 		logger.Error(err, "unable to fetch NamespaceBudget")
 		return ctrl.Result{}, err
+	}
+	now := time.Now()
+	// Ensure Accumulated.Since is initialized on first reconcile
+	if budget.Status.Accumulated.Since == "" {
+		budget.Status.Accumulated.Since = now.Format(time.RFC3339)
+	}
+	// Trigger on the 1st of the month, after the first reconcile of the day
+	if now.Day() == 1 && budget.Status.Accumulated.Since != "" {
+		since, _ := time.Parse(time.RFC3339, budget.Status.Accumulated.Since)
+		// Only generate if the report covers the previous month
+		if since.Month() != now.Month() {
+			if err := r.maybeGenerateReport(ctx, budget); err != nil {
+				logger.Error(err, "failed to generate monthly cost report")
+				// non-fatal
+			}
+			// Reset accumulation for the new month
+			budget.Status.Accumulated.CoreHours = "0"
+			budget.Status.Accumulated.GiBHours = "0"
+			budget.Status.Accumulated.Since = now.Format(time.RFC3339)
+		}
 	}
 	previousPhase := budget.Status.Phase
 	// step2: handle deletion
@@ -155,7 +178,7 @@ func (r *NamespaceBudgetReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 	// step 5: Compute elapsed time since last reconcile
 	// step 5: Accumulate core-hours and GiB-hours into status
-	now := time.Now()
+	now = time.Now()
 	lastReconcile := budget.Status.LastReconcile.Time
 	if lastReconcile.IsZero() {
 		lastReconcile = now // first reconcile, no elapsed time to accumulate
@@ -168,13 +191,18 @@ func (r *NamespaceBudgetReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	currentMemGiB := currentMemBytes / (1024 * 1024 * 1024)
 
 	// - Add this tick's consumption to the running total
-	budget.Status.Accumulated.CoreHours += currentCPUCores * elapsedHours
-	budget.Status.Accumulated.GiBHours += currentMemGiB * elapsedHours
+	prevCore, _ := strconv.ParseFloat(budget.Status.Accumulated.CoreHours, 64)
+	prevCore += currentCPUCores * elapsedHours
+	budget.Status.Accumulated.CoreHours = fmt.Sprintf("%.6f", prevCore)
+
+	prevGiB, _ := strconv.ParseFloat(budget.Status.Accumulated.GiBHours, 64)
+	prevGiB += currentMemGiB * elapsedHours
+	budget.Status.Accumulated.GiBHours = fmt.Sprintf("%.6f", prevGiB)
 	budget.Status.LastReconcile = metav1.NewTime(now)
 
 	// - Update the snapshot of current (instantaneous) usage for display
-	budget.Status.CurrentUsage.Cpu = fmt.Sprintf("%.3f", currentCPUCores)
-	budget.Status.CurrentUsage.Memory = fmt.Sprintf("%.3f", currentMemGiB)
+	budget.Status.CurrentUsage.Cpu = fmt.Sprintf("%.6f", currentCPUCores)
+	budget.Status.CurrentUsage.Memory = fmt.Sprintf("%.6f", currentMemGiB)
 
 	// step 6: Compute budgetPercent + phase
 	monthlyCPU, _ := strconv.ParseFloat(budget.Spec.Monthly.Cpu, 64)
@@ -183,10 +211,12 @@ func (r *NamespaceBudgetReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	cpuPercent := 0.0
 	memPercent := 0.0
 	if monthlyCPU > 0 {
-		cpuPercent = (budget.Status.Accumulated.CoreHours / monthlyCPU) * 100
+		accCore, _ := strconv.ParseFloat(budget.Status.Accumulated.CoreHours, 64)
+		cpuPercent = (accCore / monthlyCPU) * 100
 	}
 	if monthlyMem > 0 {
-		memPercent = (budget.Status.Accumulated.GiBHours / monthlyMem) * 100
+		accGiB, _ := strconv.ParseFloat(budget.Status.Accumulated.GiBHours, 64)
+		memPercent = (accGiB / monthlyMem) * 100
 	}
 
 	budgetPercent := math.Max(cpuPercent, memPercent)
@@ -217,6 +247,7 @@ func (r *NamespaceBudgetReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		idleWorkloads, err := idle.DetectIdle(
 			ctx,
 			*r.PrometheusClient,
+			r.Client,
 			req.Namespace,
 			float64(budget.Spec.IdleThreshold.CpuPercent),
 			window,
@@ -252,7 +283,9 @@ func (r *NamespaceBudgetReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			}
 
 			// Persist the filtered idle workload list in status for visibility
-			budget.Status.IdleWorkloads = toIdleWorkloadStatus(actionable)
+			// Preserve any previously observed IdleSince timestamps to avoid
+			// causing a status diff every reconcile (which would requeue immediately).
+			budget.Status.IdleWorkloads = toIdleWorkloadStatus(actionable, budget.Status.IdleWorkloads)
 			if err := r.updateStatus(ctx, budget, phase, budget.Status.BudgetPercent); err != nil {
 				logger.Error(err, "failed to update status with idle workloads")
 			}
@@ -390,13 +423,29 @@ func setCondition(conditions *[]metav1.Condition, new metav1.Condition) {
 	*conditions = append(*conditions, new)
 }
 
-func toIdleWorkloadStatus(workloads []idle.IdleWorkload) []costv1alpha1.IdleWorkload {
+func toIdleWorkloadStatus(workloads []idle.IdleWorkload, previous []costv1alpha1.IdleWorkload) []costv1alpha1.IdleWorkload {
+	// Build a lookup of previous IdleSince by namespace/name so we can
+	// preserve the original timestamp when a workload remains idle across
+	// reconciles. This prevents status-only changes (moving timestamps) that
+	// would otherwise re-trigger reconciliation continuously.
+	prevMap := make(map[string]metav1.Time, len(previous))
+	for _, p := range previous {
+		key := p.Namespace + "/" + p.Name
+		prevMap[key] = p.IdleSince
+	}
+
 	result := make([]costv1alpha1.IdleWorkload, 0, len(workloads))
 	for _, w := range workloads {
+		key := w.Namespace + "/" + w.Name
+		idleSince := metav1.NewTime(w.IdleSince)
+		if t, ok := prevMap[key]; ok && !t.IsZero() {
+			// reuse previously-observed IdleSince
+			idleSince = t
+		}
 		result = append(result, costv1alpha1.IdleWorkload{
 			Name:      w.Name,
 			Namespace: w.Namespace,
-			IdleSince: metav1.NewTime(w.IdleSince),
+			IdleSince: idleSince,
 		})
 	}
 	return result
@@ -409,4 +458,17 @@ func parseDuration(value string) (time.Duration, error) {
 	}
 
 	return duration, nil
+}
+
+func (r *NamespaceBudgetReconciler) maybeGenerateReport(
+	ctx context.Context,
+	budget *costv1alpha1.NamespaceBudget,
+) error {
+	g := report.NewGenerator(
+		*r.PrometheusClient,
+		r.Client,
+		r.CPUPricePerCoreHour,
+		r.MemPricePerGiBHour,
+	)
+	return g.Generate(ctx, *budget)
 }

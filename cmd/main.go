@@ -20,6 +20,7 @@ import (
 	"crypto/tls"
 	"flag"
 	"os"
+	"strconv"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -88,6 +89,17 @@ func main() {
 	}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
+	setupLog.Info("Prometheus address configured", "address", prometheusAddr)
+	cpuPrice, err := strconv.ParseFloat(getEnvOrDefault("CPU_PRICE_PER_CORE_HOUR", "0.048"), 64)
+	if err != nil {
+		setupLog.Error(err, "invalid CPU_PRICE_PER_CORE_HOUR")
+		os.Exit(1)
+	}
+	memPrice, err := strconv.ParseFloat(getEnvOrDefault("MEM_PRICE_PER_GIB_HOUR", "0.006"), 64)
+	if err != nil {
+		setupLog.Error(err, "invalid MEM_PRICE_PER_GIB_HOUR")
+		os.Exit(1)
+	}
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
@@ -185,9 +197,11 @@ func main() {
 	promClient := metrics.NewClient(prometheusAddr)
 
 	if err := (&controller.NamespaceBudgetReconciler{
-		Client:           mgr.GetClient(),
-		Scheme:           mgr.GetScheme(),
-		PrometheusClient: promClient,
+		Client:              mgr.GetClient(),
+		Scheme:              mgr.GetScheme(),
+		PrometheusClient:    promClient,
+		CPUPricePerCoreHour: cpuPrice,
+		MemPricePerGiBHour:  memPrice,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "namespacebudget")
 		os.Exit(1)
@@ -215,4 +229,11 @@ func main() {
 		setupLog.Error(err, "Failed to run manager")
 		os.Exit(1)
 	}
+}
+
+func getEnvOrDefault(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }

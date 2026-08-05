@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cpu-burner
+  namespace: team-payments
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cpu-burner
+  template:
+    metadata:
+      labels:
+        app: cpu-burner
+    spec:
+      containers:
+        - name: burner
+          image: polinux/stress
+          command:
+            - stress
+          args:
+            - "--cpu"
+            - "1"
+            - "--timeout"
+            - "600s"
+          resources:
+            requests:
+              cpu: 500m
+              memory: 64Mi

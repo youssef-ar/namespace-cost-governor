@@ -11,6 +11,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 type IdleWorkload struct {
@@ -22,6 +23,7 @@ type IdleWorkload struct {
 func DetectIdle(
 	ctx context.Context,
 	metricsClient metrics.Client,
+	kubeClient client.Client,
 	namespace string,
 	threshold float64, // CPU cores below this = idle (e.g. 0.01)
 	window time.Duration,
@@ -47,18 +49,39 @@ func DetectIdle(
 	// Group samples by pod, compute average value
 	podAvg := averageByPod(samples)
 
-	var idle []IdleWorkload
+	// Aggregate per-deployment (average across pods) then decide once per deployment
+	depSums := map[string]float64{}
+	depCounts := map[string]int{}
 	for pod, avgCPU := range podAvg {
-		if avgCPU < threshold {
-			idle = append(idle, IdleWorkload{
-				Name:      podToDeployment(pod), // strip the random suffix
+		dep := PodToDeployment(pod)
+		depSums[dep] += avgCPU
+		depCounts[dep]++
+	}
+
+	var idleList []IdleWorkload
+	for dep, sum := range depSums {
+		avg := sum / float64(depCounts[dep])
+		if avg < threshold {
+			idleList = append(idleList, IdleWorkload{
+				Name:      dep,
 				Namespace: namespace,
-				IdleSince: start, // conservative — idle for at least the window
+				IdleSince: start,
 			})
 		}
 	}
 
-	return idle, nil
+	// Verify each detected workload actually has a Deployment object
+	var verified []IdleWorkload
+	for _, w := range idleList {
+		dep := &appsv1.Deployment{}
+		if err := kubeClient.Get(ctx, client.ObjectKey{Namespace: w.Namespace, Name: w.Name}, dep); err != nil {
+			// not a Deployment or couldn't fetch — skip silently
+			continue
+		}
+		verified = append(verified, w)
+	}
+
+	return verified, nil
 }
 
 // averageByPod collapses []Sample into a map of pod → mean value
@@ -87,7 +110,7 @@ func promDuration(d time.Duration) string {
 // podToDeployment strips the two trailing random suffixes from a pod name.
 // payments-api-6d4f9b-xkq2p → payments-api
 // This is a heuristic — works for Deployments, not for StatefulSets.
-func podToDeployment(podName string) string {
+func PodToDeployment(podName string) string {
 	parts := strings.Split(podName, "-")
 	if len(parts) <= 2 {
 		return podName

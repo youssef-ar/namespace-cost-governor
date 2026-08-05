@@ -1,0 +1,20 @@
+apiVersion: cost.cost.platform.io/v1alpha1
+kind: NamespaceBudget
+metadata:
+  name: budget
+  namespace: team-payments
+spec:
+  monthly:
+    cpu: "0.01"       # very tight — will hit Warning quickly
+    memory: "10"
+  idleThreshold:
+    cpuPercent: 5
+    window: 30m
+  actions:
+    onWarning:
+      - notify: slack
+    onExceeded:
+      - scaleDownIdle: true
+    onHardLimit:
+      - suspendAll: true
+  exclusions: []

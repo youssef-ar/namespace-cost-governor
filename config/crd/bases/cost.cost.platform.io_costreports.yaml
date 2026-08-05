@@ -126,15 +126,18 @@ spec:
                 type: string
               period:
                 type: string
-              suspendedEvents:
+              suspensionEvents:
                 items:
                   properties:
-                    estimatedSaved:
+                    reason:
                       type: string
-                    suspendedAt:
+                    scaledDownAt:
                       type: string
                     workload:
                       type: string
+                  required:
+                  - scaledDownAt
+                  - workload
                   type: object
                 type: array
               topConsumers:
@@ -142,21 +145,31 @@ spec:
                   properties:
                     cpuPercent:
                       type: integer
+                    estimatedUSD:
+                      type: string
                     memoryPercent:
                       type: integer
                     workload:
                       type: string
+                  required:
+                  - cpuPercent
+                  - estimatedUSD
+                  - memoryPercent
+                  - workload
                   type: object
                 type: array
               totalCost:
                 properties:
-                  cpu:
+                  coreHours:
                     type: string
-                  estimatedCost:
-                    description: based on configurable price-per-unit
+                  estimatedUSD:
                     type: string
-                  memory:
+                  gibHours:
                     type: string
+                required:
+                - coreHours
+                - estimatedUSD
+                - gibHours
                 type: object
             type: object
         required:

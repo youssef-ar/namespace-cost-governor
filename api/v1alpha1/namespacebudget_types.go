@@ -43,8 +43,8 @@ type Action struct {
 
 type Exclusion struct {
 	// never touch this deployment, statefulset, or cronjob
-	Name          string `json:"name"`
-	LabelSelector *metav1.LabelSelector
+	Name          string                `json:"name"`
+	LabelSelector *metav1.LabelSelector `json:"labelSelector,omitempty"`
 }
 
 // NamespaceBudgetStatus defines the observed state of NamespaceBudget.
@@ -78,9 +78,9 @@ type IdleWorkload struct {
 	IdleSince metav1.Time `json:"idleSince"`
 }
 type AccumulatedUsage struct {
-	CoreHours float64 `json:"coreHours"`
-	GiBHours  float64 `json:"gibHours"`
-	Since     string  `json:"since"` // start of current month, RFC3339
+	CoreHours string `json:"coreHours"`
+	GiBHours  string `json:"gibHours"`
+	Since     string `json:"since"` // start of current month, RFC3339
 }
 
 // +kubebuilder:object:root=true

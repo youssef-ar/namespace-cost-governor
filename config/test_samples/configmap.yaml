@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cost-governor-config
+  namespace: cost-system
+data:
+  cpuPricePerCoreHour: "0.048"
+  memPricePerGiBHour: "0.006"

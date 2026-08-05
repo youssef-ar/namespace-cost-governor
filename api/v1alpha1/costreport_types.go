@@ -10,12 +10,12 @@ type CostReportSpec struct {
 
 // CostReportStatus defines the observed state of CostReport.
 type CostReportStatus struct {
-	Period          string           `json:"period,omitempty"` // YYYY-MM
-	NameSpace       string           `json:"namespace,omitempty"`
-	TotalCost       TotalCost        `json:"totalCost,omitempty"`
-	TopConsumers    []TopConsumer    `json:"topConsumers,omitempty"`
-	IdleEvents      []IdleEvent      `json:"idleEvents,omitempty"`
-	SuspendedEvents []SuspendedEvent `json:"suspendedEvents,omitempty"`
+	Period          string            `json:"period,omitempty"` // YYYY-MM
+	NameSpace       string            `json:"namespace,omitempty"`
+	TotalCost       TotalCost         `json:"totalCost,omitempty"`
+	TopConsumers    []TopConsumer     `json:"topConsumers,omitempty"`
+	IdleEvents      []IdleEvent       `json:"idleEvents,omitempty"`
+	SuspendedEvents []SuspensionEvent `json:"suspensionEvents,omitempty"`
 
 	// conditions represent the current state of the CostReport resource.
 	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
@@ -33,16 +33,16 @@ type CostReportStatus struct {
 }
 
 type TotalCost struct {
-	Cpu    string `json:"cpu,omitempty"`
-	Memory string `json:"memory,omitempty"`
-	// based on configurable price-per-unit
-	EstimatedCost string `json:"estimatedCost,omitempty"`
+	CoreHours    string `json:"coreHours"`
+	GiBHours     string `json:"gibHours"`
+	EstimatedUSD string `json:"estimatedUSD"`
 }
 
 type TopConsumer struct {
-	Workload      string `json:"workload,omitempty"`
-	CpuPercent    int    `json:"cpuPercent,omitempty"`
-	MemoryPercent int    `json:"memoryPercent,omitempty"`
+	Workload      string `json:"workload"`
+	CPUPercent    int    `json:"cpuPercent"`
+	MemoryPercent int    `json:"memoryPercent"`
+	EstimatedUSD  string `json:"estimatedUSD"`
 }
 
 type IdleEvent struct {
@@ -51,10 +51,10 @@ type IdleEvent struct {
 	EstimatedSaved string `json:"estimatedSaved,omitempty"`
 }
 
-type SuspendedEvent struct {
-	Workload       string `json:"workload,omitempty"`
-	SuspendedAt    string `json:"suspendedAt,omitempty"`
-	EstimatedSaved string `json:"estimatedSaved,omitempty"`
+type SuspensionEvent struct {
+	Workload     string `json:"workload"`
+	ScaledDownAt string `json:"scaledDownAt"`
+	Reason       string `json:"reason,omitempty"`
 }
 
 // +kubebuilder:object:root=true
