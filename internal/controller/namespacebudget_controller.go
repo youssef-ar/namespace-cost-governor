@@ -60,6 +60,7 @@ const (
 // +kubebuilder:rbac:groups=cost.cost.platform.io,resources=namespacebudgets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=cost.cost.platform.io,resources=namespacebudgets/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=cost.cost.platform.io,resources=namespacebudgets/finalizers,verbs=update
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;update;patch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -342,11 +343,19 @@ func (r *NamespaceBudgetReconciler) cleanup(
 		"name", budget.Name,
 	)
 
-	// TODO:
-	// - remove cost policies
-	// - delete generated resources
-	// - release quotas
-	// - clean metrics
+	deployments := &appsv1.DeploymentList{}
+	if err := r.List(ctx, deployments, client.InNamespace(budget.Namespace)); err != nil {
+		return fmt.Errorf("listing Deployments for NamespaceBudget cleanup: %w", err)
+	}
+	for i := range deployments.Items {
+		deployment := &deployments.Items[i]
+		if !actions.IsScaledDownByOperator(*deployment) {
+			continue
+		}
+		if err := actions.Restore(ctx, r.Client, budget.Namespace, deployment.Name); err != nil {
+			return fmt.Errorf("restoring Deployment %s: %w", deployment.Name, err)
+		}
+	}
 
 	return nil
 }

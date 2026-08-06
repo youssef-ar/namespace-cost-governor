@@ -3,6 +3,8 @@ package metrics
 import (
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestComputeCoreHours(t *testing.T) {
@@ -61,4 +63,21 @@ func TestAverageCPUPercent_Empty(t *testing.T) {
 	if got != 0 {
 		t.Errorf("AverageCPUPercent = %f, want 0", got)
 	}
+}
+
+func TestSumValues_MultipleSamples(t *testing.T) {
+	got := SumValues([]Sample{{Value: 1.25}, {Value: 2.5}, {Value: 0.25}})
+	assert.Equal(t, 4.0, got)
+}
+
+func TestSumValues_Empty(t *testing.T) {
+	assert.Equal(t, 0.0, SumValues(nil))
+}
+
+func TestSumValues_SingleSample(t *testing.T) {
+	assert.Equal(t, 3.75, SumValues([]Sample{{Value: 3.75}}))
+}
+
+func TestSumValues_ZeroValues(t *testing.T) {
+	assert.Equal(t, 0.0, SumValues([]Sample{{Value: 0}, {Value: 0}}))
 }
