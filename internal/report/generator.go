@@ -91,27 +91,33 @@ func (g *Generator) Generate(ctx context.Context, budget costv1alpha1.NamespaceB
 		suspensionEvents = []costv1alpha1.SuspensionEvent{}
 	}
 
-	// Build and create the CostReport object
+	// Create the CostReport first. Status is a subresource and must be written
+	// separately after the object exists.
 	report := &costv1alpha1.CostReport{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      reportRef,
 			Namespace: budget.Namespace,
 		},
-		Status: costv1alpha1.CostReportStatus{
-			Period:    period,
-			NameSpace: budget.Namespace,
-			TotalCost: costv1alpha1.TotalCost{
-				CoreHours:    fmt.Sprintf("%.2f", totalCoreHours),
-				GiBHours:     fmt.Sprintf("%.2f", totalGiBHours),
-				EstimatedUSD: fmt.Sprintf("$%.2f", totalUSD),
-			},
-			TopConsumers:    topConsumers,
-			SuspendedEvents: suspensionEvents,
-		},
 	}
 
 	if err := g.Client.Create(ctx, report); err != nil {
 		return fmt.Errorf("creating cost report: %w", err)
+	}
+
+	report.Status = costv1alpha1.CostReportStatus{
+		Period:    period,
+		NameSpace: budget.Namespace,
+		TotalCost: costv1alpha1.TotalCost{
+			CoreHours:    fmt.Sprintf("%.2f", totalCoreHours),
+			GiBHours:     fmt.Sprintf("%.2f", totalGiBHours),
+			EstimatedUSD: fmt.Sprintf("$%.2f", totalUSD),
+		},
+		TopConsumers:    topConsumers,
+		SuspendedEvents: suspensionEvents,
+	}
+
+	if err := g.Client.Status().Update(ctx, report); err != nil {
+		return fmt.Errorf("updating cost report status: %w", err)
 	}
 
 	return nil

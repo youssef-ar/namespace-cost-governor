@@ -29,10 +29,13 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	costv1alpha1 "github.com/youssef-ar/namespace-cost-governor/api/v1alpha1"
 	"github.com/youssef-ar/namespace-cost-governor/internal/idle"
@@ -51,18 +54,6 @@ type NamespaceBudgetReconciler struct {
 }
 
 const (
-	phaseOK        = "OK"
-	phaseWarning   = "Warning"
-	phaseExceeded  = "Exceeded"
-	phaseSuspended = "Suspended"
-
-	warningThreshold   = 0.80
-	exceededThreshold  = 1.00
-	suspendedThreshold = 1.20
-
-	conditionUsageWarning   = "UsageWarning"
-	conditionBudgetExceeded = "BudgetExceeded"
-
 	namespaceBudgetFinalizer = "cost.platform.io/cleanup"
 )
 
@@ -97,19 +88,26 @@ func (r *NamespaceBudgetReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	if budget.Status.Accumulated.Since == "" {
 		budget.Status.Accumulated.Since = now.Format(time.RFC3339)
 	}
-	// Trigger on the 1st of the month, after the first reconcile of the day
+	// Generate a report when the accumulated usage belongs to an earlier
+	// calendar month. This also allows a missed month-boundary reconciliation
+	// to catch up and does not depend on the namespace having any usage.
 	if now.Day() == 1 && budget.Status.Accumulated.Since != "" {
-		since, _ := time.Parse(time.RFC3339, budget.Status.Accumulated.Since)
-		// Only generate if the report covers the previous month
-		if since.Month() != now.Month() {
-			if err := r.maybeGenerateReport(ctx, budget); err != nil {
-				logger.Error(err, "failed to generate monthly cost report")
-				// non-fatal
+		since, err := time.Parse(time.RFC3339, budget.Status.Accumulated.Since)
+		if err != nil {
+			logger.Error(err, "invalid monthly accumulation start time", "since", budget.Status.Accumulated.Since)
+		} else {
+			// Only generate if the report covers the previous month
+			if since.Month() != now.Month() || since.Year() != now.Year() {
+				if err := r.maybeGenerateReport(ctx, budget); err != nil {
+					logger.Error(err, "failed to generate monthly cost report")
+					// Keep the previous start time so the next reconciliation retries.
+				} else {
+					// Reset accumulation only after the report was successfully generated.
+					budget.Status.Accumulated.CoreHours = "0"
+					budget.Status.Accumulated.GiBHours = "0"
+					budget.Status.Accumulated.Since = now.Format(time.RFC3339)
+				}
 			}
-			// Reset accumulation for the new month
-			budget.Status.Accumulated.CoreHours = "0"
-			budget.Status.Accumulated.GiBHours = "0"
-			budget.Status.Accumulated.Since = now.Format(time.RFC3339)
 		}
 	}
 	previousPhase := budget.Status.Phase
@@ -154,7 +152,7 @@ func (r *NamespaceBudgetReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			return ctrl.Result{}, err
 		}
 
-		return ctrl.Result{}, nil
+		return ctrl.Result{Requeue: true}, nil
 	}
 
 	// step 4: Query Prometheus for CPU + memory
@@ -225,13 +223,7 @@ func (r *NamespaceBudgetReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	phase := determinePhase(budgetPercent)
 	phaseChanged := previousPhase != phase
 
-	// step 7: update status conditions
-	if err := r.updateStatus(ctx, budget, phase, int(budgetPercent)); err != nil {
-		logger.Error(err, "unable to update NamespaceBudget status")
-		return ctrl.Result{}, err
-	}
-
-	// step 8: Detect idle workloads if budget is exceeded or suspended
+	// step 7: Detect idle workloads if budget is exceeded or suspended
 	// Only run idle detection if budget is under pressure
 
 	var actionable []idle.IdleWorkload
@@ -282,17 +274,21 @@ func (r *NamespaceBudgetReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 				actionable = append(actionable, w)
 			}
 
-			// Persist the filtered idle workload list in status for visibility
+			// Keep the filtered idle workload list in status for visibility. The
+			// complete status is persisted once, after idle detection finishes.
 			// Preserve any previously observed IdleSince timestamps to avoid
 			// causing a status diff every reconcile (which would requeue immediately).
 			budget.Status.IdleWorkloads = toIdleWorkloadStatus(actionable, budget.Status.IdleWorkloads)
-			if err := r.updateStatus(ctx, budget, phase, budget.Status.BudgetPercent); err != nil {
-				logger.Error(err, "failed to update status with idle workloads")
-			}
 		}
 	}
 
-	// step9: Scale down actionable idle workloads (Exceeded and Suspended phase)
+	// step 8: Persist status after all status fields have been calculated.
+	if err := r.updateStatus(ctx, budget, phase, int(budgetPercent)); err != nil {
+		logger.Error(err, "unable to update NamespaceBudget status")
+		return ctrl.Result{}, err
+	}
+
+	// step 9: Scale down actionable idle workloads (Exceeded and Suspended phase)
 	affectedNames := make([]string, 0, len(actionable))
 	if phase == "Exceeded" || phase == "Suspended" {
 		for _, w := range actionable {
@@ -305,7 +301,7 @@ func (r *NamespaceBudgetReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		}
 	}
 
-	// step10: Suspend all workloads if in Suspended phase
+	// step 10: Suspend all workloads if in Suspended phase
 	if phase == "Suspended" {
 		suspendedNames, err := actions.SuspendAll(ctx, r.Client, req.Namespace, budget.Spec.Exclusions)
 		if err != nil {
@@ -313,7 +309,7 @@ func (r *NamespaceBudgetReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		}
 		affectedNames = append(affectedNames, suspendedNames...)
 	}
-	// step11: Notify on phase transition only
+	// step 11: Notify on phase transition only
 	if phaseChanged && r.SlackWebhookURL != "" {
 		msg := actions.BuildMessage(req.Namespace, phase, budget.Status.BudgetPercent, affectedNames)
 		if err := actions.SendSlack(ctx, r.SlackWebhookURL, msg); err != nil {
@@ -329,7 +325,7 @@ func (r *NamespaceBudgetReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 // SetupWithManager sets up the controller with the Manager.
 func (r *NamespaceBudgetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&costv1alpha1.NamespaceBudget{}).
+		For(&costv1alpha1.NamespaceBudget{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Named("namespacebudget").
 		Complete(r)
 }
@@ -397,7 +393,22 @@ func (r *NamespaceBudgetReconciler) updateStatus(
 		LastTransitionTime: now,
 	})
 
-	return r.Status().Update(ctx, budget)
+	// Status updates use resourceVersion for optimistic concurrency. Re-fetch
+	// before retrying so a status update from another reconcile cannot cause a
+	// tight conflict/requeue loop.
+	desiredStatus := budget.Status
+	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		latest := &costv1alpha1.NamespaceBudget{}
+		if err := r.Get(ctx, types.NamespacedName{
+			Name:      budget.Name,
+			Namespace: budget.Namespace,
+		}, latest); err != nil {
+			return err
+		}
+
+		latest.Status = desiredStatus
+		return r.Status().Update(ctx, latest)
+	})
 }
 
 func conditionStatus(b bool) metav1.ConditionStatus {

@@ -17,4 +17,4 @@ spec:
       - scaleDownIdle: true
     onHardLimit:
       - suspendAll: true
-  exclusions: []
+  exclusions: [{"name":"payments-db"}]

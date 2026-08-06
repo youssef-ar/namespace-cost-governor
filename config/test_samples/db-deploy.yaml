@@ -1,0 +1,21 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payments-db
+  namespace: team-payments
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: payments-db
+  template:
+    metadata:
+      labels:
+        app: payments-db
+    spec:
+      containers:
+        - name: db
+          image: postgres:15-alpine
+          env:
+            - name: POSTGRES_PASSWORD
+              value: test
