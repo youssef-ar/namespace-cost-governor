@@ -236,6 +236,9 @@ func (g *Generator) collectSuspensionEvents(
 
 	var events []costv1alpha1.SuspensionEvent
 	for _, d := range deploymentList.Items {
+		if d.Annotations == nil {
+			continue
+		}
 		scaledDownAt, ok := d.Annotations[actions.AnnotationScaledDownAt]
 		if !ok {
 			continue
