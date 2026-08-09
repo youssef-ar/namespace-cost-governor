@@ -1,0 +1,14 @@
+apiVersion: v2
+name: namespace-cost-governor
+description: Kubernetes operator enforcing per-namespace cost budgets
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - kubernetes
+  - operator
+  - finops
+  - cost
+maintainers:
+  - name: Youssef
+    url: https://github.com/youssef-ar

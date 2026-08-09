@@ -1,0 +1,14 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "namespace-cost-governor.fullname" . }}-manager-rolebinding
+  labels:
+    {{- include "namespace-cost-governor.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "namespace-cost-governor.fullname" . }}-manager-role
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "namespace-cost-governor.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}

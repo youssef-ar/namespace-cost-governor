@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "namespace-cost-governor.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "namespace-cost-governor.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "namespace-cost-governor.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "namespace-cost-governor.selectorLabels" . | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- if and .Values.slack.webhookURL (not .Values.slack.existingSecret) }}
+        checksum/slack-secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "namespace-cost-governor.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: manager
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          args:
+            - "--prometheus-address={{ .Values.prometheus.address }}"
+            - "--health-probe-bind-address=:8081"
+            - "--leader-elect={{ .Values.leaderElection.enabled }}"
+          env:
+            - name: CPU_PRICE_PER_CORE_HOUR
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "namespace-cost-governor.fullname" . }}-config
+                  key: cpuPricePerCoreHour
+            - name: MEM_PRICE_PER_GIB_HOUR
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "namespace-cost-governor.fullname" . }}-config
+                  key: memPricePerGiBHour
+            {{- if or .Values.slack.webhookURL .Values.slack.existingSecret }}
+            - name: SLACK_WEBHOOK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "namespace-cost-governor.slackSecretName" . }}
+                  key: {{ include "namespace-cost-governor.slackSecretKey" . }}
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8081
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8081
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}

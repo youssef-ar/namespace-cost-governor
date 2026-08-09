@@ -1,0 +1,48 @@
+image:
+  repository: ghcr.io/youssef-ar/namespace-cost-governor
+  tag: ""          # defaults to Chart.appVersion
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 128Mi
+  requests:
+    cpu: 10m
+    memory: 64Mi
+
+prometheus:
+  address: "http://prometheus-kube-prometheus-prometheus.monitoring:9090"
+
+pricing:
+  cpuPricePerCoreHour: "0.048"
+  memPricePerGiBHour: "0.006"
+
+slack:
+  webhookURL: ""   # set at install time via --set slack.webhookURL=...
+  existingSecret: ""
+  existingSecretKey: webhookURL
+
+leaderElection:
+  enabled: true
+
+serviceAccount:
+  create: true
+  name: ""
+
+nameOverride: ""
+fullnameOverride: ""
+
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL

@@ -1,0 +1,22 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "namespace-cost-governor.fullname" . }}-manager-role
+  labels:
+    {{- include "namespace-cost-governor.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["cost.cost.platform.io"]
+    resources: ["namespacebudgets", "costreports"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["cost.cost.platform.io"]
+    resources: ["namespacebudgets/status", "costreports/status"]
+    verbs: ["get", "update", "patch"]
+  - apiGroups: ["cost.cost.platform.io"]
+    resources: ["namespacebudgets/finalizers", "costreports/finalizers"]
+    verbs: ["update"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "watch"]
