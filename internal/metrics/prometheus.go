@@ -64,7 +64,7 @@ func (c *Client) doRequest(ctx context.Context, path string, params url.Values) 
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -77,8 +77,8 @@ func (c *Client) doRequest(ctx context.Context, path string, params url.Values) 
 			ResultType string `json:"resultType"`
 			Result     []struct {
 				Metric map[string]string `json:"metric"`
-				Values [][]interface{}   `json:"values"`
-				Value  []interface{}     `json:"value"`
+				Values [][]any           `json:"values"`
+				Value  []any             `json:"value"`
 			} `json:"result"`
 		} `json:"data,omitempty"`
 		Error string `json:"error,omitempty"`
@@ -131,7 +131,7 @@ func (c *Client) doRequest(ctx context.Context, path string, params url.Values) 
 	return samples, nil
 }
 
-func toTime(v interface{}) (time.Time, error) {
+func toTime(v any) (time.Time, error) {
 	sec, ok := v.(float64)
 	if !ok {
 		return time.Time{}, fmt.Errorf("expected float64 timestamp, got %T", v)
@@ -141,7 +141,7 @@ func toTime(v interface{}) (time.Time, error) {
 	return time.Unix(secInt, nsec), nil
 }
 
-func toFloat64(v interface{}) (float64, error) {
+func toFloat64(v any) (float64, error) {
 	s, ok := v.(string)
 	if !ok {
 		return 0, fmt.Errorf("expected string value, got %T", v)

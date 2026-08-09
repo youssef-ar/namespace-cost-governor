@@ -23,12 +23,12 @@ func actionTestClient(t *testing.T, objects ...client.Object) client.Client {
 	return fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build()
 }
 
-func deploymentForTest(name string, replicas int32, annotations map[string]string) *appsv1.Deployment {
-	return &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default", Annotations: annotations}, Spec: appsv1.DeploymentSpec{Replicas: &replicas}}
+func deploymentForTest(replicas int32, annotations map[string]string) *appsv1.Deployment {
+	return &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "payments-api", Namespace: "default", Annotations: annotations}, Spec: appsv1.DeploymentSpec{Replicas: &replicas}}
 }
 
 func TestScaleDown_ThreeReplicas(t *testing.T) {
-	c := actionTestClient(t, deploymentForTest("payments-api", 3, nil))
+	c := actionTestClient(t, deploymentForTest(3, nil))
 	require.NoError(t, ScaleDown(context.Background(), c, idle.IdleWorkload{Name: "payments-api", Namespace: "default"}))
 
 	got := &appsv1.Deployment{}
@@ -41,7 +41,7 @@ func TestScaleDown_ThreeReplicas(t *testing.T) {
 }
 
 func TestScaleDown_AlreadyScaledDownByOperator(t *testing.T) {
-	c := actionTestClient(t, deploymentForTest("payments-api", 3, map[string]string{AnnotationScaledDownBy: "namespace-cost-governor"}))
+	c := actionTestClient(t, deploymentForTest(3, map[string]string{AnnotationScaledDownBy: "namespace-cost-governor"}))
 	require.NoError(t, ScaleDown(context.Background(), c, idle.IdleWorkload{Name: "payments-api", Namespace: "default"}))
 	got := &appsv1.Deployment{}
 	require.NoError(t, c.Get(context.Background(), client.ObjectKey{Name: "payments-api", Namespace: "default"}, got))
@@ -49,7 +49,7 @@ func TestScaleDown_AlreadyScaledDownByOperator(t *testing.T) {
 }
 
 func TestScaleDown_AlreadyAtZero(t *testing.T) {
-	c := actionTestClient(t, deploymentForTest("payments-api", 0, nil))
+	c := actionTestClient(t, deploymentForTest(0, nil))
 	require.NoError(t, ScaleDown(context.Background(), c, idle.IdleWorkload{Name: "payments-api", Namespace: "default"}))
 	got := &appsv1.Deployment{}
 	require.NoError(t, c.Get(context.Background(), client.ObjectKey{Name: "payments-api", Namespace: "default"}, got))
@@ -63,7 +63,7 @@ func TestScaleDown_NotFound(t *testing.T) {
 
 func TestRestore_WithOperatorAnnotations(t *testing.T) {
 	annotations := map[string]string{AnnotationScaledDownBy: "namespace-cost-governor", AnnotationScaledDownAt: "now", AnnotationOriginalReplicas: "3", AnnotationReason: "idle"}
-	c := actionTestClient(t, deploymentForTest("payments-api", 0, annotations))
+	c := actionTestClient(t, deploymentForTest(0, annotations))
 	require.NoError(t, Restore(context.Background(), c, "default", "payments-api"))
 	got := &appsv1.Deployment{}
 	require.NoError(t, c.Get(context.Background(), client.ObjectKey{Name: "payments-api", Namespace: "default"}, got))
@@ -75,7 +75,7 @@ func TestRestore_WithOperatorAnnotations(t *testing.T) {
 }
 
 func TestRestore_NotScaledDownByOperator(t *testing.T) {
-	c := actionTestClient(t, deploymentForTest("payments-api", 0, nil))
+	c := actionTestClient(t, deploymentForTest(0, nil))
 	require.NoError(t, Restore(context.Background(), c, "default", "payments-api"))
 	got := &appsv1.Deployment{}
 	require.NoError(t, c.Get(context.Background(), client.ObjectKey{Name: "payments-api", Namespace: "default"}, got))
@@ -83,23 +83,23 @@ func TestRestore_NotScaledDownByOperator(t *testing.T) {
 }
 
 func TestRestore_MissingOriginalReplicas(t *testing.T) {
-	c := actionTestClient(t, deploymentForTest("payments-api", 0, map[string]string{AnnotationScaledDownBy: "namespace-cost-governor"}))
+	c := actionTestClient(t, deploymentForTest(0, map[string]string{AnnotationScaledDownBy: "namespace-cost-governor"}))
 	assert.Error(t, Restore(context.Background(), c, "default", "payments-api"))
 }
 
 func TestRestore_InvalidOriginalReplicas(t *testing.T) {
-	c := actionTestClient(t, deploymentForTest("payments-api", 0, map[string]string{AnnotationScaledDownBy: "namespace-cost-governor", AnnotationOriginalReplicas: "three"}))
+	c := actionTestClient(t, deploymentForTest(0, map[string]string{AnnotationScaledDownBy: "namespace-cost-governor", AnnotationOriginalReplicas: "three"}))
 	assert.Error(t, Restore(context.Background(), c, "default", "payments-api"))
 }
 
 func TestIsScaledDownByOperator_OperatorAnnotation(t *testing.T) {
-	assert.True(t, IsScaledDownByOperator(*deploymentForTest("payments-api", 0, map[string]string{AnnotationScaledDownBy: "namespace-cost-governor"})))
+	assert.True(t, IsScaledDownByOperator(*deploymentForTest(0, map[string]string{AnnotationScaledDownBy: "namespace-cost-governor"})))
 }
 
 func TestIsScaledDownByOperator_MissingAnnotation(t *testing.T) {
-	assert.False(t, IsScaledDownByOperator(*deploymentForTest("payments-api", 0, map[string]string{})))
+	assert.False(t, IsScaledDownByOperator(*deploymentForTest(0, map[string]string{})))
 }
 
 func TestIsScaledDownByOperator_NilAnnotations(t *testing.T) {
-	assert.False(t, IsScaledDownByOperator(*deploymentForTest("payments-api", 0, nil)))
+	assert.False(t, IsScaledDownByOperator(*deploymentForTest(0, nil)))
 }

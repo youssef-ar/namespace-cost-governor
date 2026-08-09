@@ -34,7 +34,7 @@ type Actions struct {
 }
 type Action struct {
 	// Notify Slack
-	Notify string `json:"notify,omitempty"` //slack
+	Notify string `json:"notify,omitempty"` // slack
 	// Scale down idle workloads
 	ScaleDownIdle bool `json:"scaleDownIdle,omitempty"`
 	// Suspend all workloads

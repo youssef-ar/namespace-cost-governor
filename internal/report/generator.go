@@ -33,10 +33,10 @@ type WorkloadUsage struct {
 	MemPercent float64 `json:"memPercent"`
 }
 
-func NewGenerator(metricsClient metrics.Client, client client.Client, cpuPricePerCoreHour, memPricePerGiBHour float64) *Generator {
+func NewGenerator(metricsClient metrics.Client, kubeClient client.Client, cpuPricePerCoreHour, memPricePerGiBHour float64) *Generator {
 	return &Generator{
 		MetricsClient:       metricsClient,
-		Client:              client,
+		Client:              kubeClient,
 		CPUPricePerCoreHour: cpuPricePerCoreHour,
 		MemPricePerGiBHour:  memPricePerGiBHour,
 	}
@@ -198,10 +198,7 @@ func (g *Generator) buildTopConsumers(
 	})
 
 	// Take top 5
-	limit := 5
-	if len(workloads) < limit {
-		limit = len(workloads)
-	}
+	limit := min(len(workloads), 5)
 
 	consumers := make([]costv1alpha1.TopConsumer, 0, limit)
 	for _, w := range workloads[:limit] {

@@ -22,21 +22,23 @@ func TestQueryRange(t *testing.T) {
 		gotStep = r.URL.Query().Get("step")
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		if err := json.NewEncoder(w).Encode(map[string]any{
 			"status": "success",
-			"data": map[string]interface{}{
+			"data": map[string]any{
 				"resultType": "matrix",
-				"result": []interface{}{
-					map[string]interface{}{
+				"result": []any{
+					map[string]any{
 						"metric": map[string]string{"pod": "nginx-abc"},
-						"values": []interface{}{
-							[]interface{}{float64(1000), "42.5"},
-							[]interface{}{float64(2000), "43.0"},
+						"values": []any{
+							[]any{float64(1000), "42.5"},
+							[]any{float64(2000), "43.0"},
 						},
 					},
 				},
 			},
-		})
+		}); err != nil {
+			t.Errorf("encoding response: %v", err)
+		}
 	}))
 	defer srv.Close()
 
@@ -99,18 +101,20 @@ func TestQueryInstant(t *testing.T) {
 		gotQuery = r.URL.Query().Get("query")
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		if err := json.NewEncoder(w).Encode(map[string]any{
 			"status": "success",
-			"data": map[string]interface{}{
+			"data": map[string]any{
 				"resultType": "vector",
-				"result": []interface{}{
-					map[string]interface{}{
+				"result": []any{
+					map[string]any{
 						"metric": map[string]string{"pod": "redis-xyz"},
-						"value":  []interface{}{float64(3000), "99.9"},
+						"value":  []any{float64(3000), "99.9"},
 					},
 				},
 			},
-		})
+		}); err != nil {
+			t.Errorf("encoding response: %v", err)
+		}
 	}))
 	defer srv.Close()
 
@@ -146,7 +150,9 @@ func TestQueryInstant(t *testing.T) {
 func TestQueryRange_ServerError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprintln(w, "internal error")
+		if _, err := fmt.Fprintln(w, "internal error"); err != nil {
+			t.Errorf("writing error response: %v", err)
+		}
 	}))
 	defer srv.Close()
 
@@ -160,10 +166,12 @@ func TestQueryRange_ServerError(t *testing.T) {
 func TestQueryRange_APIError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{
+		if err := json.NewEncoder(w).Encode(map[string]string{
 			"status": "error",
 			"error":  "bad query",
-		})
+		}); err != nil {
+			t.Errorf("encoding error response: %v", err)
+		}
 	}))
 	defer srv.Close()
 
@@ -177,7 +185,9 @@ func TestQueryRange_APIError(t *testing.T) {
 func TestQueryInstant_ServerError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprintln(w, "internal error")
+		if _, err := fmt.Fprintln(w, "internal error"); err != nil {
+			t.Errorf("writing error response: %v", err)
+		}
 	}))
 	defer srv.Close()
 
@@ -191,10 +201,12 @@ func TestQueryInstant_ServerError(t *testing.T) {
 func TestQueryInstant_APIError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{
+		if err := json.NewEncoder(w).Encode(map[string]string{
 			"status": "error",
 			"error":  "bad query",
-		})
+		}); err != nil {
+			t.Errorf("encoding error response: %v", err)
+		}
 	}))
 	defer srv.Close()
 

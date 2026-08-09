@@ -41,42 +41,60 @@ func statusCmd() *cobra.Command {
 
 			// Print summary table
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-			fmt.Fprintf(w, "NAMESPACE\tPHASE\tBUDGET%%\tCPU\t MEMORY\tLAST RECONCILE\n")
-			fmt.Fprintf(w, "%s\t%s\t%d%%\t%s cores\t%s GiB\t%s\n",
+			if _, err := fmt.Fprintf(w, "NAMESPACE\tPHASE\tBUDGET%%\tCPU\t MEMORY\tLAST RECONCILE\n"); err != nil {
+				return fmt.Errorf("writing status header: %w", err)
+			}
+			if _, err := fmt.Fprintf(w, "%s\t%s\t%d%%\t%s cores\t%s GiB\t%s\n",
 				namespace,
 				budget.Status.Phase,
 				budget.Status.BudgetPercent,
 				budget.Status.CurrentUsage.Cpu,
 				budget.Status.CurrentUsage.Memory,
 				budget.Status.LastReconcile.Format("2006-01-02 15:04:05"),
-			)
-			w.Flush()
+			); err != nil {
+				return fmt.Errorf("writing status: %w", err)
+			}
+			if err := w.Flush(); err != nil {
+				return fmt.Errorf("flushing status: %w", err)
+			}
 
 			// Print idle workloads if any
 			if len(budget.Status.IdleWorkloads) > 0 {
 				fmt.Println("\nIdle workloads:")
 				w2 := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-				fmt.Fprintf(w2, "  NAME\tIDLE SINCE\n")
+				if _, err := fmt.Fprintf(w2, "  NAME\tIDLE SINCE\n"); err != nil {
+					return fmt.Errorf("writing idle header: %w", err)
+				}
 				for _, idle := range budget.Status.IdleWorkloads {
-					fmt.Fprintf(w2, "  %s\t%s\n",
+					if _, err := fmt.Fprintf(w2, "  %s\t%s\n",
 						idle.Name,
 						idle.IdleSince.Format("2006-01-02 15:04:05"),
-					)
+					); err != nil {
+						return fmt.Errorf("writing idle workload: %w", err)
+					}
 				}
-				w2.Flush()
+				if err := w2.Flush(); err != nil {
+					return fmt.Errorf("flushing idle workloads: %w", err)
+				}
 			}
 
 			// Print conditions
 			if len(budget.Status.Conditions) > 0 {
 				fmt.Println("\nConditions:")
 				w3 := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-				fmt.Fprintf(w3, "  TYPE\tSTATUS\tMESSAGE\n")
-				for _, c := range budget.Status.Conditions {
-					fmt.Fprintf(w3, "  %s\t%s\t%s\n",
-						c.Type, c.Status, c.Message,
-					)
+				if _, err := fmt.Fprintf(w3, "  TYPE\tSTATUS\tMESSAGE\n"); err != nil {
+					return fmt.Errorf("writing conditions header: %w", err)
 				}
-				w3.Flush()
+				for _, c := range budget.Status.Conditions {
+					if _, err := fmt.Fprintf(w3, "  %s\t%s\t%s\n",
+						c.Type, c.Status, c.Message,
+					); err != nil {
+						return fmt.Errorf("writing condition: %w", err)
+					}
+				}
+				if err := w3.Flush(); err != nil {
+					return fmt.Errorf("flushing conditions: %w", err)
+				}
 			}
 
 			return nil

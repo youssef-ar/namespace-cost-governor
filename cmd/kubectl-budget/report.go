@@ -65,13 +65,19 @@ func reportCmd() *cobra.Command {
 			if len(report.Status.TopConsumers) > 0 {
 				fmt.Println("Top consumers:")
 				w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-				fmt.Fprintf(w, "  WORKLOAD\tCPU%%\tMEM%%\tESTIMATED\n")
-				for _, tc := range report.Status.TopConsumers {
-					fmt.Fprintf(w, "  %s\t%d%%\t%d%%\t%s\n",
-						tc.Workload, tc.CPUPercent, tc.MemoryPercent, tc.EstimatedUSD,
-					)
+				if _, err := fmt.Fprintf(w, "  WORKLOAD\tCPU%%\tMEM%%\tESTIMATED\n"); err != nil {
+					return fmt.Errorf("writing report header: %w", err)
 				}
-				w.Flush()
+				for _, tc := range report.Status.TopConsumers {
+					if _, err := fmt.Fprintf(w, "  %s\t%d%%\t%d%%\t%s\n",
+						tc.Workload, tc.CPUPercent, tc.MemoryPercent, tc.EstimatedUSD,
+					); err != nil {
+						return fmt.Errorf("writing report consumer: %w", err)
+					}
+				}
+				if err := w.Flush(); err != nil {
+					return fmt.Errorf("flushing report consumers: %w", err)
+				}
 				fmt.Println()
 			}
 
@@ -79,13 +85,19 @@ func reportCmd() *cobra.Command {
 			if len(report.Status.SuspendedEvents) > 0 {
 				fmt.Println("Suspension events:")
 				w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-				fmt.Fprintf(w, "  WORKLOAD\tSCALED DOWN AT\tREASON\n")
-				for _, ev := range report.Status.SuspendedEvents {
-					fmt.Fprintf(w, "  %s\t%s\t%s\n",
-						ev.Workload, ev.ScaledDownAt, ev.Reason,
-					)
+				if _, err := fmt.Fprintf(w, "  WORKLOAD\tSCALED DOWN AT\tREASON\n"); err != nil {
+					return fmt.Errorf("writing suspension header: %w", err)
 				}
-				w.Flush()
+				for _, ev := range report.Status.SuspendedEvents {
+					if _, err := fmt.Fprintf(w, "  %s\t%s\t%s\n",
+						ev.Workload, ev.ScaledDownAt, ev.Reason,
+					); err != nil {
+						return fmt.Errorf("writing suspension event: %w", err)
+					}
+				}
+				if err := w.Flush(); err != nil {
+					return fmt.Errorf("flushing suspension events: %w", err)
+				}
 			}
 
 			return nil

@@ -55,6 +55,8 @@ type NamespaceBudgetReconciler struct {
 
 const (
 	namespaceBudgetFinalizer = "cost.platform.io/cleanup"
+	phaseExceeded            = "Exceeded"
+	phaseSuspended           = "Suspended"
 )
 
 // +kubebuilder:rbac:groups=cost.cost.platform.io,resources=namespacebudgets,verbs=get;list;watch;create;update;patch;delete
@@ -71,6 +73,8 @@ const (
 //
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.23.3/pkg/reconcile
+//
+//nolint:gocyclo // Reconciliation intentionally coordinates the complete budget lifecycle.
 func (r *NamespaceBudgetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := logf.FromContext(ctx)
 	// step1: Fetch the NamespaceBudget instance
@@ -228,7 +232,7 @@ func (r *NamespaceBudgetReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	// Only run idle detection if budget is under pressure
 
 	var actionable []idle.IdleWorkload
-	if phase == "Exceeded" || phase == "Suspended" {
+	if phase == phaseExceeded || phase == phaseSuspended {
 		window, err := parseDuration(
 			budget.Spec.IdleThreshold.Window,
 		)
@@ -291,7 +295,7 @@ func (r *NamespaceBudgetReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 	// step 9: Scale down actionable idle workloads (Exceeded and Suspended phase)
 	affectedNames := make([]string, 0, len(actionable))
-	if phase == "Exceeded" || phase == "Suspended" {
+	if phase == phaseExceeded || phase == phaseSuspended {
 		for _, w := range actionable {
 			if err := actions.ScaleDown(ctx, r.Client, w); err != nil {
 				logger.Error(err, "failed to scale down idle workload", "deployment", w.Name)
@@ -303,7 +307,7 @@ func (r *NamespaceBudgetReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 
 	// step 10: Suspend all workloads if in Suspended phase
-	if phase == "Suspended" {
+	if phase == phaseSuspended {
 		suspendedNames, err := actions.SuspendAll(ctx, r.Client, req.Namespace, budget.Spec.Exclusions)
 		if err != nil {
 			logger.Error(err, "failed to suspend all workloads")
