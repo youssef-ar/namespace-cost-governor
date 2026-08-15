@@ -75,62 +75,205 @@ Following the options to release and provide this solution to the users.
 1. Build the installer for the image built and published in the registry:
 
 ```sh
-make build-installer IMG=<some-registry>/namespace-cost-governor:tag
+![CI](https://github.com/youssef-ar/namespace-cost-governor/actions/workflows/ci.yaml/badge.svg) ![Release](https://github.com/youssef-ar/namespace-cost-governor/actions/workflows/release.yaml/badge.svg)
+
+# namespace-cost-governor
+
+`namespace-cost-governor` is a Kubernetes operator for enforcing monthly CPU and memory budgets per namespace in multi-tenant clusters. Platform administrators declare a `NamespaceBudget`; the operator reads per-pod usage from Prometheus, accumulates core-hours and GiB-hours, applies configured warning, idle scale-down, and suspension actions, and creates a monthly `CostReport`.
+
+## Architecture
+
+```text
+NamespaceBudget CRD
+                |
+                v
+Operator reconciliation (60 s) <---- Prometheus HTTP API
+                |
+                +--> status: usage, phase, conditions
+                +--> graduated actions: notify / scale idle / suspend all
+                |
+                v
+CostReport CRD (previous month, created on the first day)
 ```
 
-**NOTE:** The makefile target mentioned above generates an 'install.yaml'
-file in the dist directory. This file contains all the resources built
-with Kustomize, which are necessary to install this project without its
-dependencies.
+## Quick start
 
-2. Using the installer
+### Prerequisites
 
-Users can just run 'kubectl apply -f <URL for YAML BUNDLE>' to install
-the project, i.e.:
+- Kubernetes cluster with `kubectl` access and permission to install cluster-scoped RBAC and CRDs.
+- Prometheus exposing `container_cpu_usage_seconds_total` and `container_memory_working_set_bytes`.
+- Helm 3 for the chart installation.
+- A container registry accessible by the cluster if building the image yourself.
+
+### Install
+
+CRDs are managed separately from the Helm release:
 
 ```sh
-kubectl apply -f https://raw.githubusercontent.com/<org>/namespace-cost-governor/<tag or branch>/dist/install.yaml
+make install
+helm install namespace-cost-governor ./helm/namespace-cost-governor \
+    --namespace namespace-cost-governor-system \
+    --create-namespace \
+    --set image.repository=ghcr.io/youssef-ar/namespace-cost-governor \
+    --set image.tag=0.1.0
 ```
 
-### By providing a Helm Chart
-
-1. Build the chart using the optional helm plugin
+Set the Prometheus endpoint and prices for the target cluster when they differ from the chart defaults:
 
 ```sh
-kubebuilder edit --plugins=helm/v2-alpha
+helm upgrade --install namespace-cost-governor ./helm/namespace-cost-governor \
+    --namespace namespace-cost-governor-system --create-namespace \
+    --set prometheus.address=http://prometheus.monitoring:9090 \
+    --set pricing.cpuPricePerCoreHour=0.048 \
+    --set pricing.memPricePerGiBHour=0.006
 ```
 
-2. See that a chart was generated under 'dist/chart', and users
-can obtain this solution from there.
+Apply a budget in the namespace being governed:
 
-**NOTE:** If you change the project, you need to update the Helm Chart
-using the same command above to sync the latest changes. Furthermore,
-if you create webhooks, you need to use the above command with
-the '--force' flag and manually ensure that any custom configuration
-previously added to 'dist/chart/values.yaml' or 'dist/chart/manager/manager.yaml'
-is manually re-applied afterwards.
+```yaml
+apiVersion: cost.cost.platform.io/v1alpha1
+kind: NamespaceBudget
+metadata:
+    name: budget
+    namespace: payments
+spec:
+    monthly:
+        cpu: "50"
+        memory: "200"
+    idleThreshold:
+        cpuPercent: 5
+        window: 30m
+    actions:
+        onWarning:
+            - notify: slack
+        onExceeded:
+            - notify: slack
+            - scaleDownIdle: true
+        onHardLimit:
+            - notify: slack
+            - suspendAll: true
+    exclusions:
+        - name: payments-db
+        - labelSelector:
+                matchLabels:
+                    cost.platform.io/critical: "true"
+```
 
-## Contributing
-// TODO(user): Add detailed information on how you would like others to contribute to this project
+```sh
+kubectl apply -f namespacebudget.yaml
+kubectl -n payments get namespacebudget payments -o yaml
+```
 
-**NOTE:** Run `make help` for more information on all potential `make` targets
+The Helm chart can receive a Slack webhook with `--set slack.webhookURL=...`; for production use, prefer `slack.existingSecret` and `slack.existingSecretKey`. The chart's `leaderElection.enabled` defaults to `true`.
 
-More information can be found via the [Kubebuilder Documentation](https://book.kubebuilder.io/introduction.html)
+## Budget phases
+
+The phase is based on the larger of CPU and memory budget usage. Actions are evaluated on transitions into a phase and are not repeated on every reconciliation tick.
+
+| Phase | Threshold | Enforcement |
+|---|---:|---|
+| `OK` | `< 80%` | No graduated action. |
+| `Warning` | `>= 80%` | Configured `onWarning` actions, commonly Slack notification. |
+| `Exceeded` | `>= 100%` | Configured `onExceeded` actions; commonly scale idle Deployments to zero. |
+| `Suspended` | `>= 120%` | Configured `onHardLimit` actions; `suspendAll` scales all non-excluded Deployments to zero. |
+
+Two status conditions are maintained: `UsageWarning` becomes true at 80%, and `BudgetExceeded` becomes true at 100%. Their `LastTransitionTime` changes only when the condition state changes.
+
+## Exclusions
+
+An exclusion can specify an exact workload name or a Kubernetes `LabelSelector`. Name matching is exact and does not support wildcards. A label selector uses Kubernetes set-based selector semantics. The operator checks exclusions before idle scale-down and suspension; an excluded Deployment is never touched, regardless of phase. Idle discovery still verifies candidate workloads against the Kubernetes API and ignores non-Deployment workloads.
+
+## Cost model
+
+CPU is integrated as core-hours from Prometheus CPU rate; memory is integrated as GiB-hours from working-set bytes. The estimated cost is:
+
+$$\text{core-hours} \times \text{CPU price} + \text{GiB-hours} \times \text{memory price}$$
+
+Prices come from `CPU_PRICE_PER_CORE_HOUR` and `MEM_PRICE_PER_GIB_HOUR`, injected by the Helm pricing ConfigMap. Defaults are `0.048` USD per core-hour and `0.006` USD per GiB-hour. The estimate is not a cloud bill: it excludes egress, storage, taxes, control-plane charges, reservations, and spot discounts. See [docs/cost-model.md](docs/cost-model.md).
+
+## kubectl-budget plugin
+
+The repository builds a standalone `kubectl-budget` binary. Put it on `PATH`; kubectl discovers it as `kubectl budget`.
+
+```sh
+go build -o kubectl-budget ./cmd/kubectl-budget
+install -m 0755 kubectl-budget ~/.local/bin/kubectl-budget
+kubectl budget status payments
+```
+
+Example status output:
+
+```text
+NAMESPACE  PHASE     BUDGET%  CPU                  MEMORY             LAST RECONCILE
+payments   Exceeded  106%     0.083000 cores       1.750000 GiB       2026-08-15 12:00:00
+
+Idle workloads:
+    NAME          IDLE SINCE
+    payments-api  2026-08-15 11:30:00
+
+Conditions:
+    TYPE             STATUS  MESSAGE
+    UsageWarning     True    Budget usage at 106%
+    BudgetExceeded   True    Budget usage at 106%
+```
+
+Fetch the latest monthly report:
+
+```sh
+kubectl budget report payments
+```
+
+```text
+PERIOD   CORE-HOURS  GIB-HOURS  ESTIMATED USD
+2026-07  49.250000   188.000000 2.48
+
+TOP CONSUMERS
+WORKLOAD       CPU%  MEMORY%  ESTIMATED USD
+payments-api   72    61       1.54
+payments-jobs  20    29       0.62
+
+SUSPENSION EVENTS
+WORKLOAD       SCALED DOWN AT              REASON
+payments-api   2026-07-28T12:00:00Z       hard limit
+```
+
+Restore Deployments previously scaled down by the operator. The confirmation flag is required:
+
+```sh
+kubectl budget restore payments --yes
+```
+
+```text
+Restored 1 deployment in namespace payments
+```
+
+Restore uses the operator's annotations to recover original replicas and removes those annotations. Do not remove them manually before restoration.
+
+## Documentation
+
+- [Design decisions](docs/design.md)
+- [Cost model](docs/cost-model.md)
+- [API reference](docs/api-reference.md)
+
+## Development and testing
+
+```sh
+make lint-fix
+make test
+```
+
+CI runs lint and generated-code checks, unit tests, and then Kind-based end-to-end tests. Release automation builds and publishes the distroless image and Helm chart for `v*` tags.
+
+## Uninstall
+
+```sh
+kubectl delete -f namespacebudget.yaml
+helm uninstall namespace-cost-governor -n namespace-cost-governor-system
+make uninstall
+```
+
+Deleting a `NamespaceBudget` invokes the `cost.platform.io/cleanup` finalizer before the resource is removed.
 
 ## License
 
-Copyright 2026.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-
-# namespace-cost-governor
+Copyright 2026. Licensed under the Apache License, Version 2.0.
